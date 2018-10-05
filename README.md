@@ -2,9 +2,7 @@ Reacher RL
 ===========================
 
 
-In this project, I will solve a continuous control problem using deep reinforcement learning. I will work with the [Reacher](https://github.com/Unity-Technologies/ml-agents/blob/master/docs/Learning-Environment-Examples.md#reacher) environment, from [Unity ML Toolkit](https://github.com/Unity-Technologies/ml-agents), that contains 20 identical agents, each with its own copy of the environment.
-
-The goal of the agent is to maintain its position at the target location for as many time steps as possible, as demonstrated below:
+In this project, I will solve a continuous control problem using deep reinforcement learning. I will work with the [Reacher](https://github.com/Unity-Technologies/ml-agents/blob/master/docs/Learning-Environment-Examples.md#reacher) environment, from [Unity ML Toolkit](https://github.com/Unity-Technologies/ml-agents), that contains 20 identical agents, each with its own copy of the environment. The goal of the agent is to maintain its position at the target location for as many time steps as possible, as demonstrated below:
 
 <p align="center"><img src="https://user-images.githubusercontent.com/10624937/43851024-320ba930-9aff-11e8-8493-ee547c6af349.gif" alt="Example" width="50%" style="middle"></p>
 
