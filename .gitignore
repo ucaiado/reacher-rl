@@ -10,6 +10,7 @@ __pycache__/
 .DS_Store
 .directory
 Reacher.app/
+Reacher_Windows_x86_64/
 Banana_Linux_NoVis.zip
 Banana_Linux_NoVis/
 nohup.out
