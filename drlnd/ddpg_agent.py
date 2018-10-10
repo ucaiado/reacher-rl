@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from models import Actor, Critic
+from .models import Actor, Critic
 
 '''
 Begin help functions and variables'
@@ -26,46 +26,95 @@ Begin help functions and variables'
 
 
 BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 128        # minibatch size
+BATCH_SIZE = 10         # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR_ACTOR = 1e-4         # learning rate of the actor
 LR_CRITIC = 3e-4        # learning rate of the critic
 WEIGHT_DECAY = 0.0001   # L2 weight decay
+UPDATE_EVERY = 20
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+devc = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 '''
 End help functions and variables'
 '''
 
 
-class Agent(object):
+class MetaAgent(object):
+    '''
+    '''
+
+    def __init__(self, state_size, action_size, nb_agents, rand_seed):
+        '''Initialize an MetaAgent object.
+
+        :param state_size: int. dimension of each state
+        :param action_size: int. dimension of each action
+        :param nb_agents: int. number of agents to use
+        :param seed: int. random seed
+        '''
+        # Replay memory
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE,
+                                   BATCH_SIZE, rand_seed)
+        self.nb_agents = nb_agents
+        self.action_size = action_size
+        self.l_agents = [DDPGAgent(state_size, action_size, rand_seed,
+                                   self.memory)
+                         for i in range(nb_agents)]
+
+    def step(self, states, actions, reward, next_state, done):
+        for agent, action, state in zip(self.l_agents, actions, states):
+            agent.step(state, action, reward, next_state, done)
+
+    def act(self, states, add_noise=True):
+        na_rtn = np.zeros([self.nb_agents, self.action_size])
+        for idx, agent in enumerate(self.l_agents):
+            na_rtn[idx, :] = agent.act(states[idx], add_noise)
+        return na_rtn
+
+    def reset(self):
+        for agent in self.l_agents:
+            agent.reset()
+
+
+class DDPGAgent(object):
     '''
     Implementation of a DQN agent that interacts with and learns from the
     environment
     '''
 
-    def __init__(self, state_size, action_size, random_seed):
-        '''Initialize an DQNAgent object.
+    def __init__(self, state_size, action_size, rand_seed, memory):
+        '''Initialize an DDPGAgent object.
 
         :param state_size: int. dimension of each state
         :param action_size: int. dimension of each action
         :param seed: int. random seed
+        :param memory: ReplayBuffer object.
         '''
         self.state_size = state_size
         self.action_size = action_size
-        self.seed = random.seed(seed)
+        self.seed = random.seed(rand_seed)
 
-        # Q-Network
-        self.qnet = QNetwork(state_size, action_size, seed).to(devc)
-        self.qnet_target = QNetwork(state_size, action_size, seed).to(devc)
-        # TODO: test RMSprop here
-        self.optimizer = optim.Adam(self.qnet.parameters(), lr=LR)
+        # Actor Network (w/ Target Network)
+        self.actor_local = Actor(state_size, action_size, rand_seed).to(devc)
+        self.actor_target = Actor(state_size, action_size, rand_seed).to(devc)
+        self.actor_optimizer = optim.Adam(self.actor_local.parameters(),
+                                          lr=LR_ACTOR)
+
+        # Critic Network (w/ Target Network)
+        self.critic_local = Critic(state_size, action_size, rand_seed).to(devc)
+        self.critic_target = Critic(state_size, action_size, rand_seed).to(devc)
+        self.critic_optimizer = optim.Adam(self.critic_local.parameters(),
+                                           lr=LR_CRITIC,
+                                           weight_decay=WEIGHT_DECAY)
+
+        # Noise process
+        self.noise = OUNoise(action_size, rand_seed)
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
+        self.memory = memory
+
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
 
@@ -82,58 +131,67 @@ class Agent(object):
                 experiences = self.memory.sample()
                 self.learn(experiences, GAMMA)
 
-    def act(self, state, eps=0.):
+    def act(self, state, add_noise=True):
         '''Returns actions for given state as per current policy.
 
         :param state: array_like. current state
-        :param eps: float. epsilon, for epsilon-greedy action selection
+        :param add_noise: Boolean. If should add noise to the action
         '''
         state = torch.from_numpy(state).float().unsqueeze(0).to(devc)
-        self.qnet.eval()
+        self.actor_local.eval()
         with torch.no_grad():
-            action_values = self.qnet(state)
-        self.qnet.train()
-
-        # Epsilon-greedy action selection
-        if random.random() > eps:
-            return np.argmax(action_values.cpu().data.numpy())
-        else:
-            return random.choice(np.arange(self.action_size))
+            action = self.actor_local(state).cpu().data.numpy()
+        self.actor_local.train()
+        if add_noise:
+            action += self.noise.sample()
+        return np.clip(action, -1, 1)
 
     def reset(self):
-        pass
+        self.noise.reset()
 
     def learn(self, experiences, gamma):
-        '''Update value parameters using given batch of experience tuples.
+        '''
+        Update policy and value params using given batch of experience tuples.
+        Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
+        where:
+            actor_target(state) -> action
+            critic_target(state, action) -> Q-value
 
         :param experiences: Tuple[torch.Tensor]. tuple of (s, a, r, s', done)
         :param gamma: float. discount factor
         '''
         states, actions, rewards, next_states, dones = experiences
-        rewards_ = torch.clamp(rewards, min=-1., max=1.)
+        # rewards_ = torch.clamp(rewards, min=-1., max=1.)
         rewards_ = rewards
 
-        # it is optimized to use in gpu
-        # Get max predicted Q values (for next states) from target model
-        # max(1) := np.max(array, axis=1)
-        # unsqueeze : = array.reshape(-1, 1)
-        # max_a' \hat{Q}(\phi(s_{t+1}, a'; θ^{-}))
-        max_Qhat = self.qnet_target(next_states).detach().max(1)[0].unsqueeze(1)
-        # y_i = r + γ * maxQhat
-        # y_i = r, if done
-        Q_target = rewards_ + (gamma * max_Qhat * (1 - dones))
+        # --------------------------- update critic ---------------------------
+        # Get predicted next-state actions and Q values from target models
+        actions_next = self.actor_target(next_states)
+        Q_targets_next = self.critic_target(next_states, actions_next)
+        # Compute Q targets for current states (y_i)
+        Q_targets = rewards_ + (gamma * Q_targets_next * (1 - dones))
+        # Compute critic loss
+        Q_expected = self.critic_local(states, actions)
+        critic_loss = F.mse_loss(Q_expected, Q_targets)
+        # Minimize the loss
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        # suggested by Attempt 3, from Udacity
+        torch.nn.utils.clip_grad_norm(self.critic_local.parameters(), 1)
+        self.critic_optimizer.step()
 
-        # Q(\phi(s_t), a_j; \theta)
-        Q_expected = self.qnet(states).gather(1, actions)
+        # --------------------------- update actor ---------------------------
+        # Compute actor loss
+        actions_pred = self.actor_local(states)
+        actor_loss = -self.critic_local(states, actions_pred).mean()
+        # Minimize the loss
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
 
-        # perform gradient descent step on on (y_i - Q)**2
-        loss = F.mse_loss(Q_expected, Q_target)
-        self.optimizer.zero_grad()  # Clear the gradients
-        loss.backward()
-        self.optimizer.step()
-
-        # ------------------- update target network ------------------- #
-        self.soft_update(self.qnet, self.qnet_target, TAU)
+        # ---------------------- update target networks ----------------------
+        self.soft_update(self.critic_local, self.critic_target, TAU)
+        self.soft_update(self.actor_local, self.actor_target, TAU)
 
     def soft_update(self, local_model, target_model, tau):
         '''Soft update model parameters.
@@ -147,6 +205,30 @@ class Agent(object):
         for target_param, local_param in iter_params:
             tensor_aux = tau*local_param.data + (1.0-tau)*target_param.data
             target_param.data.copy_(tensor_aux)
+
+
+class OUNoise:
+    """Ornstein-Uhlenbeck process."""
+
+    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
+        """Initialize parameters and noise process."""
+        self.mu = mu * np.ones(size)
+        self.theta = theta
+        self.sigma = sigma
+        self.seed = random.seed(seed)
+        self.reset()
+
+    def reset(self):
+        """Reset the internal state (= noise) to mean (mu)."""
+        self.state = copy.copy(self.mu)
+
+    def sample(self):
+        """Update internal state and return it as a noise sample."""
+        x = self.state
+        dx = self.theta * (self.mu - x)
+        dx += self.sigma * np.array([random.random() for i in range(len(x))])
+        self.state = x + dx
+        return self.state
 
 
 class ReplayBuffer(object):
