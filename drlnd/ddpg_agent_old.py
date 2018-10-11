@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from models import Actor, Critic
+from .models import Actor, Critic
 
 import pdb
 
@@ -28,13 +28,13 @@ Begin help functions and variables
 
 
 BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 128        # minibatch size
+BATCH_SIZE = 10         # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR_ACTOR = 1e-4         # learning rate of the actor
-LR_CRITIC = 1e-3        # learning rate of the critic
+LR_CRITIC = 3e-4        # learning rate of the critic
 WEIGHT_DECAY = 0.0001   # L2 weight decay
-UPDATE_EVERY = 2        # steps to update
+UPDATE_EVERY = 20       # steps to update
 
 
 devc = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -46,8 +46,6 @@ End help functions and variables
 
 class MetaAgent(object):
     '''
-    Implementation of a DQN agent that interacts with and learns from the
-    environment
     '''
 
     def __init__(self, state_size, action_size, nb_agents, rand_seed):
@@ -58,9 +56,49 @@ class MetaAgent(object):
         :param nb_agents: int. number of agents to use
         :param seed: int. random seed
         '''
-
+        # Replay memory
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE,
+                                   BATCH_SIZE, rand_seed)
         self.nb_agents = nb_agents
         self.action_size = action_size
+        self.l_agents = [DDPGAgent(state_size, action_size, rand_seed,
+                                   self.memory)
+                         for i in range(nb_agents)]
+
+    def step(self, states, actions, rewards, next_states, dones):
+        iter_obj = zip(self.l_agents, states, actions, rewards, next_states,
+                       dones)
+        for agent, state, action, reward, next_state, done in iter_obj:
+            agent.step(state, action, reward, next_state, done)
+
+    def act(self, states, add_noise=True):
+        na_rtn = np.zeros([self.nb_agents, self.action_size])
+        for idx, agent in enumerate(self.l_agents):
+            na_rtn[idx, :] = agent.act(states[idx], add_noise)
+        return na_rtn
+
+    def reset(self):
+        for agent in self.l_agents:
+            agent.reset()
+
+
+class DDPGAgent(object):
+    '''
+    Implementation of a DQN agent that interacts with and learns from the
+    environment
+    '''
+
+    def __init__(self, state_size, action_size, rand_seed, memory):
+        '''Initialize an DDPGAgent object.
+
+        :param state_size: int. dimension of each state
+        :param action_size: int. dimension of each action
+        :param seed: int. random seed
+        :param memory: ReplayBuffer object.
+        '''
+        self.state_size = state_size
+        self.action_size = action_size
+        self.seed = random.seed(rand_seed)
 
         # Actor Network (w/ Target Network)
         self.actor_local = Actor(state_size, action_size, rand_seed).to(devc)
@@ -77,20 +115,17 @@ class MetaAgent(object):
                                            weight_decay=WEIGHT_DECAY)
 
         # Noise process
-        self.noise = OUNoise((nb_agents, action_size), rand_seed)
+        self.noise = OUNoise(action_size, rand_seed)
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE,
-                                   BATCH_SIZE, rand_seed)
+        self.memory = memory
 
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
 
-    def step(self, states, actions, rewards, next_states, dones):
-        iter_obj = zip(states, actions, rewards, next_states, dones)
-        for state, action, reward, next_state, done in iter_obj:
-            # Save experience in replay memory
-            self.memory.add(state, action, reward, next_state, done)
+    def step(self, state, action, reward, next_state, done):
+        # Save experience in replay memory
+        self.memory.add(state, action, reward, next_state, done)
 
         # Learn every UPDATE_EVERY time steps.
         self.t_step = (self.t_step + 1) % UPDATE_EVERY
@@ -102,23 +137,22 @@ class MetaAgent(object):
                 experiences = self.memory.sample()
                 self.learn(experiences, GAMMA)
 
-    def act(self, states, add_noise=True):
-        '''Returns actions for given states as per current policy.
+    def act(self, state, add_noise=True):
+        '''Returns actions for given state as per current policy.
 
-        :param states: array_like. current states
+        :param state: array_like. current state
         :param add_noise: Boolean. If should add noise to the action
         '''
-        states = torch.from_numpy(states).float().unsqueeze(0).to(devc)
+        state = torch.from_numpy(state).float().unsqueeze(0).to(devc)
         self.actor_local.eval()
         with torch.no_grad():
-            actions = self.actor_local(states).cpu().data.numpy()
+            action = self.actor_local(state).cpu().data.numpy()
         self.actor_local.train()
         # source: Select action at = μ(st|θμ) + Nt according to the current
         # policy and exploration noise
-        actions = actions[0]
         if add_noise:
-            actions += self.noise.sample()
-        return np.clip(actions, -1, 1)
+            action += self.noise.sample()
+        return np.clip(action, -1, 1)
 
     def reset(self):
         self.noise.reset()
@@ -182,10 +216,6 @@ class MetaAgent(object):
             tensor_aux = tau*local_param.data + (1.0-tau)*target_param.data
             target_param.data.copy_(tensor_aux)
 
-    def reset(self):
-        for agent in self.l_agents:
-            agent.reset()
-
 
 class OUNoise:
     """Ornstein-Uhlenbeck process."""
@@ -193,7 +223,6 @@ class OUNoise:
     def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
         """Initialize parameters and noise process."""
         self.mu = mu * np.ones(size)
-        self.size = size
         self.theta = theta
         self.sigma = sigma
         self.seed = random.seed(seed)
@@ -207,8 +236,7 @@ class OUNoise:
         """Update internal state and return it as a noise sample."""
         x = self.state
         dx = self.theta * (self.mu - x)
-        dx += self.sigma * np.random.rand(*self.size)
-        # dx += self.sigma * np.array([random.random() for i in range(len(x))])
+        dx += self.sigma * np.array([random.random() for i in range(len(x))])
         self.state = x + dx
         return self.state
 
