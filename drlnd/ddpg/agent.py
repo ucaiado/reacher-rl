@@ -18,33 +18,65 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from models import Actor, Critic
-
 import pdb
+
+try:
+    from agent_utils import param_table, Actor, Critic
+except:
+    from .agent_utils import param_table, Actor, Critic
 
 '''
 Begin help functions and variables
 '''
+BUFFER_SIZE = None
+BATCH_SIZE = None
+GAMMA = None
+TAU = None
+LR_ACTOR = None
+LR_CRITIC = None
+WEIGHT_DECAY = None
+UPDATE_EVERY = None
+DEVC = None
+PARAMS = None
 
 
-BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 128        # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-4         # learning rate of the actor
-LR_CRITIC = 1e-3        # learning rate of the critic
-WEIGHT_DECAY = 0.0001   # L2 weight decay
-UPDATE_EVERY = 2        # steps to update
+def set_global_parms(l_table):
+    '''
+    convert statsmodel tabel to the agent parameters
 
+    :param d_table: Dictionary. Parameters of the agent
+    '''
+    global BUFFER_SIZE, BATCH_SIZE, GAMMA, TAU, LR_ACTOR, LR_CRITIC
+    global WEIGHT_DECAY, UPDATE_EVERY, DEVC, PARAMS
+    d_params = dict([[x[0], x[1][0]] for x in l_table])
+    table = param_table.generate_table(l_table[:int(len(l_table)/2)],
+                                       l_table[int(len(l_table)/2):],
+                                       'DDPG PARAMETERS')
+    BUFFER_SIZE = d_params['BUFFER_SIZE']     # replay buffer size
+    BATCH_SIZE = d_params['BATCH_SIZE']       # minibatch size
+    GAMMA = d_params['GAMMA']                 # discount factor
+    TAU = d_params['TAU']                     # for soft update of targt params
+    LR_ACTOR = d_params['LR_ACTOR']           # learning rate of the actor
+    LR_CRITIC = d_params['LR_CRITIC']         # learning rate of the critic
+    WEIGHT_DECAY = d_params['WEIGHT_DECAY']   # L2 weight decay
+    UPDATE_EVERY = d_params['UPDATE_EVERY']   # steps to update
+    DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    PARAMS = table
 
-devc = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+set_global_parms([('BUFFER_SIZE', [int(1e5)]),
+                  ('BATCH_SIZE', [200]),
+                  ('GAMMA', [0.99]),
+                  ('TAU', [1e-3]),
+                  ('LR_ACTOR', [1e-4]),
+                  ('LR_CRITIC', [1e-3]),
+                  ('WEIGHT_DECAY', [0.0001]),
+                  ('UPDATE_EVERY', [2])])
 '''
 End help functions and variables
 '''
 
 
-class MetaAgent(object):
+class Agent(object):
     '''
     Implementation of a DQN agent that interacts with and learns from the
     environment
@@ -61,16 +93,17 @@ class MetaAgent(object):
 
         self.nb_agents = nb_agents
         self.action_size = action_size
+        self.__name__ = 'DDPG'
 
         # Actor Network (w/ Target Network)
-        self.actor_local = Actor(state_size, action_size, rand_seed).to(devc)
-        self.actor_target = Actor(state_size, action_size, rand_seed).to(devc)
+        self.actor_local = Actor(state_size, action_size, rand_seed).to(DEVC)
+        self.actor_target = Actor(state_size, action_size, rand_seed).to(DEVC)
         self.actor_optimizer = optim.Adam(self.actor_local.parameters(),
                                           lr=LR_ACTOR)
 
         # Critic Network (w/ Target Network)
-        self.critic_local = Critic(state_size, action_size, rand_seed).to(devc)
-        self.critic_target = Critic(state_size, action_size, rand_seed).to(devc)
+        self.critic_local = Critic(state_size, action_size, rand_seed).to(DEVC)
+        self.critic_target = Critic(state_size, action_size, rand_seed).to(DEVC)
         # NOTE: the decay corresponds to L2 regularization
         self.critic_optimizer = optim.Adam(self.critic_local.parameters(),
                                            lr=LR_CRITIC,
@@ -108,14 +141,14 @@ class MetaAgent(object):
         :param states: array_like. current states
         :param add_noise: Boolean. If should add noise to the action
         '''
-        states = torch.from_numpy(states).float().unsqueeze(0).to(devc)
+        states = torch.from_numpy(states).float().to(DEVC)
         self.actor_local.eval()
         with torch.no_grad():
             actions = self.actor_local(states).cpu().data.numpy()
         self.actor_local.train()
         # source: Select action at = μ(st|θμ) + Nt according to the current
         # policy and exploration noise
-        actions = actions[0]
+        # pdb.set_trace()
         if add_noise:
             actions += self.noise.sample()
         return np.clip(actions, -1, 1)
@@ -183,8 +216,7 @@ class MetaAgent(object):
             target_param.data.copy_(tensor_aux)
 
     def reset(self):
-        for agent in self.l_agents:
-            agent.reset()
+        self.noise.reset()
 
 
 class OUNoise:
@@ -207,7 +239,8 @@ class OUNoise:
         """Update internal state and return it as a noise sample."""
         x = self.state
         dx = self.theta * (self.mu - x)
-        dx += self.sigma * np.random.rand(*self.size)
+        # dx += self.sigma * np.random.rand(*self.size)  # Uniform disribution
+        dx += self.sigma * np.random.randn(*self.size)  # normal distribution
         # dx += self.sigma * np.array([random.random() for i in range(len(x))])
         self.state = x + dx
         return self.state
@@ -242,16 +275,16 @@ class ReplayBuffer(object):
         experiences = random.sample(self.memory, k=self.batch_size)
 
         states = torch.from_numpy(np.vstack([e.state for e in experiences
-                                  if e is not None])).float().to(devc)
+                                  if e is not None])).float().to(DEVC)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences
-                                   if e is not None])).long().to(devc)
+                                   if e is not None])).long().to(DEVC)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences
-                                   if e is not None])).float().to(devc)
+                                   if e is not None])).float().to(DEVC)
         next_states = torch.from_numpy(np.vstack([e.next_state
                                                   for e in experiences
-                                                  if e is not None])).float().to(devc)
+                                                  if e is not None])).float().to(DEVC)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences
-                                            if e is not None]).astype(np.uint8)).float().to(devc)
+                                            if e is not None]).astype(np.uint8)).float().to(DEVC)
 
         return (states, actions, rewards, next_states, dones)
 

@@ -70,7 +70,7 @@ class Actor(nn.Module):
         x = F.relu(self.fc2(x))
         # source The final output layer of the actor was a tanh layer,
         # to bound the actions
-        return F.tanh(self.fc3(x))
+        return torch.tanh(self.fc3(x))
 
 
 class Critic(nn.Module):
@@ -98,7 +98,7 @@ class Critic(nn.Module):
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
         # source: The final layer weights and biases of the critic were
         # initialized from a uniform distribution [3 × 10−4, 3 × 10−4]
-        self.fc3.weight.data.uniform_(-3e-4, 3e-4)
+        self.fc3.weight.data.uniform_(-3e-3, 3e-3)
 
     def forward(self, state, action):
         """

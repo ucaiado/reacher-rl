@@ -11,8 +11,3 @@ such as string, from unintentionally hiding valid modules that occur later
 
 Created on 10/06/2018
 """
-
-from .utils.make_env import make
-from .ddpg.agent import Agent as DDPG
-from .ddpg.agent import set_global_parms
-from .ddpg.agent import PARAMS as DDPG_PARAMS
