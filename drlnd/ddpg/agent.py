@@ -184,7 +184,7 @@ class Agent(object):
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         # suggested by Attempt 3, from Udacity
-        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+        # torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
         # --------------------------- update actor ---------------------------

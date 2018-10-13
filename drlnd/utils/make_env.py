@@ -17,7 +17,7 @@ from unityagents import UnityEnvironment
 Begin help functions and variables
 '''
 
-PATHS = {'Linux': '../Reacher.app/',
+PATHS = {'Linux': '/home/aind2/reacher-rl/Reacher_Linux_NoVis/Reacher.x86_64',
          'Windows': 'C:/GIT/reacher-rl/Reacher_Windows_x86_64/Reacher.exe',
          'Darwin': '../Reacher.app'}
 

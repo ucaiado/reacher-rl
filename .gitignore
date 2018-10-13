@@ -11,6 +11,7 @@ __pycache__/
 .directory
 Reacher.app/
 Reacher_Windows_x86_64/
+Reacher_Linux_NoVis/
 Banana_Linux_NoVis.zip
 Banana_Linux_NoVis/
 nohup.out
