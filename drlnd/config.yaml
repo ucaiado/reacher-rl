@@ -1,0 +1,14 @@
+SEED: 0
+ENVS:
+  Darwin: ../Reacher.app
+  Linux: /home/aind2/reacher-rl/Reacher_Linux_NoVis/Reacher.x86_64
+  Windows: C:/GIT/reacher-rl/Reacher_Windows_x86_64/Reacher.exe
+DDPG:
+  BATCH_SIZE: 200
+  BUFFER_SIZE: 100000
+  GAMMA: 0.99
+  LR_ACTOR: 0.0001
+  LR_CRITIC: 0.001
+  TAU: 0.001
+  UPDATE_EVERY: 2
+  WEIGHT_DECAY: 0.0001

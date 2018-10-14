@@ -12,6 +12,7 @@ Created on 10/07/2018
 import numpy as np
 import random
 import copy
+import yaml
 from collections import namedtuple, deque
 
 import torch
@@ -40,7 +41,7 @@ DEVC = None
 PARAMS = None
 
 
-def set_global_parms(l_table):
+def set_global_parms(d_table):
     '''
     convert statsmodel tabel to the agent parameters
 
@@ -48,6 +49,7 @@ def set_global_parms(l_table):
     '''
     global BUFFER_SIZE, BATCH_SIZE, GAMMA, TAU, LR_ACTOR, LR_CRITIC
     global WEIGHT_DECAY, UPDATE_EVERY, DEVC, PARAMS
+    l_table = [(a, [b]) for a, b in d_table.items()]
     d_params = dict([[x[0], x[1][0]] for x in l_table])
     table = param_table.generate_table(l_table[:int(len(l_table)/2)],
                                        l_table[int(len(l_table)/2):],
@@ -63,14 +65,8 @@ def set_global_parms(l_table):
     DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     PARAMS = table
 
-set_global_parms([('BUFFER_SIZE', [int(1e5)]),
-                  ('BATCH_SIZE', [200]),
-                  ('GAMMA', [0.99]),
-                  ('TAU', [1e-3]),
-                  ('LR_ACTOR', [1e-4]),
-                  ('LR_CRITIC', [1e-3]),
-                  ('WEIGHT_DECAY', [0.0001]),
-                  ('UPDATE_EVERY', [2])])
+set_global_parms(yaml.load(open('../config.yaml', 'r'))['DDPG'])
+
 '''
 End help functions and variables
 '''

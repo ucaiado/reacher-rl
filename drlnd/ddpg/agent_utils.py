@@ -1,7 +1,5 @@
 import sys
-import pdb
 sys.path.append("../")
-
 
 try:
     from models import Actor, Critic

@@ -8,7 +8,7 @@ Implement ...
 
 Created on 10/07/2018
 """
-from agent import Agent
+from agent import Agent, PARAMS
 from collections import deque
 from unityagents import UnityEnvironment
 import numpy as np
@@ -45,6 +45,9 @@ if __name__ == '__main__':
     scores_window = deque(maxlen=100)  # last 100 scores
 
     agent = Agent(env.state_size, env.action_size, env.num_agents, rand_seed)
+
+    print('\n')
+    print(PARAMS)
 
     print('\nNN ARCHITECURES:')
     print(agent.actor_local)

@@ -11,15 +11,14 @@ Created on 10/07/2018
 
 import platform
 from unityagents import UnityEnvironment
+import yaml
 
 
 '''
 Begin help functions and variables
 '''
 
-PATHS = {'Linux': '/home/aind2/reacher-rl/Reacher_Linux_NoVis/Reacher.x86_64',
-         'Windows': 'C:/GIT/reacher-rl/Reacher_Windows_x86_64/Reacher.exe',
-         'Darwin': '../Reacher.app'}
+PATHS = yaml.load(open('../config.yaml', 'r'))['ENVS']
 
 '''
 End help functions and variables
