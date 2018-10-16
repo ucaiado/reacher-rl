@@ -42,6 +42,14 @@ DEVC = None
 PARAMS = None
 
 
+# Discount rate - 0.99
+# Tau - 0.95
+# Rollout length - 2048
+# Optimization epochs - 10
+# Gradient clip - 0.2
+# Learning rate - 3e-4
+
+
 def set_global_parms(d_table):
     '''
     convert statsmodel tabel to the agent parameters
@@ -206,6 +214,3 @@ class Agent(object):
         for target_param, local_param in iter_params:
             tensor_aux = tau*local_param.data + (1.0-tau)*target_param.data
             target_param.data.copy_(tensor_aux)
-
-    def reset(self):
-        self.noise.reset()

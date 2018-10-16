@@ -15,6 +15,7 @@ To solve the environment, the agents must get an average score of +30 over 100 c
 This project requires **Python 3.5** or higher, the Reacher Collector Environment (follow the instructions to download [here](INSTRUCTIONS.md)) and the following Python libraries installed:
 
 - [NumPy](http://www.numpy.org/)
+- [Statsmodels]()
 - [Torch](https://pytorch.org)
 - [UnityAgents](https://github.com/Unity-Technologies/ml-agents)
 
