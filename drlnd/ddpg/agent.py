@@ -12,6 +12,7 @@ Created on 10/07/2018
 import numpy as np
 import random
 import copy
+import os
 import yaml
 from collections import namedtuple, deque
 
@@ -65,7 +66,9 @@ def set_global_parms(d_table):
     DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     PARAMS = table
 
-set_global_parms(yaml.load(open('../config.yaml', 'r'))['DDPG'])
+PATH = os.path.dirname(os.path.realpath(__file__))
+PATH = PATH.replace('ddpg', 'config.yaml')
+set_global_parms(yaml.load(open(PATH, 'r'))['DDPG'])
 
 '''
 End help functions and variables

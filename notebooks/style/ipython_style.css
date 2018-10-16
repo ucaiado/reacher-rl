@@ -1,23 +1,23 @@
 <style>
     @font-face {
         font-family: "Computer Modern";
-        src: url('/notebooks/style/cmunss.otf');
+        src: url('style/cmunss.otf');
     }
     @font-face {
         font-family: "Computer Modern";
         font-weight: bold;
-        src: url('/notebooks/style/cmunsx.otf');
+        src: url('style/cmunsx.otf');
     }
     @font-face {
         font-family: "Computer Modern";
         font-style: oblique;
-        src: url('/notebooks/style/cmunsi.otf');
+        src: url('style/cmunsi.otf');
     }
     @font-face {
         font-family: "Computer Modern";
         font-weight: bold;
         font-style: oblique;
-        src: url('/notebooks/style/cmunso.otf');
+        src: url('style/cmunso.otf');
     }
 
     div.cell{

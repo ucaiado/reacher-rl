@@ -12,14 +12,10 @@ except ModuleNotFoundError:
 
 
 
-from parallelEnv import parallelEnv
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
-from JSAnimation.IPython_display import display_animation
-from matplotlib import animation
-from IPython.display import display
 import random as rand
 
 
@@ -107,8 +103,7 @@ def collect_trajectories(envs, policy, tmax=200, nrand=5):
 
 
     # return pi_theta, states, actions, rewards, probability
-    return prob_list, state_list, \
-        action_list, reward_list
+    return prob_list, state_list, action_list, reward_list
 
 # convert states to probability, passing through the policy
 def states_to_prob(policy, states):

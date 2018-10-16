@@ -11,6 +11,7 @@ Created on 10/07/2018
 
 import platform
 from unityagents import UnityEnvironment
+import os
 import yaml
 
 
@@ -18,7 +19,9 @@ import yaml
 Begin help functions and variables
 '''
 
-PATHS = yaml.load(open('../config.yaml', 'r'))['ENVS']
+PATHS = os.path.dirname(os.path.realpath(__file__))
+PATHS = PATHS.replace('utils', 'config.yaml')
+PATHS = yaml.load(open(PATHS, 'r'))['ENVS']
 
 '''
 End help functions and variables

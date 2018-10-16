@@ -12,6 +12,7 @@ Created on 10/07/2018
 import numpy as np
 import random
 import copy
+import os
 import yaml
 from collections import namedtuple, deque
 
@@ -53,19 +54,14 @@ def set_global_parms(d_table):
     d_params = dict([[x[0], x[1][0]] for x in l_table])
     table = param_table.generate_table(l_table[:int(len(l_table)/2)],
                                        l_table[int(len(l_table)/2):],
-                                       'DDPG PARAMETERS')
-    BUFFER_SIZE = d_params['BUFFER_SIZE']     # replay buffer size
-    BATCH_SIZE = d_params['BATCH_SIZE']       # minibatch size
-    GAMMA = d_params['GAMMA']                 # discount factor
-    TAU = d_params['TAU']                     # for soft update of targt params
-    LR_ACTOR = d_params['LR_ACTOR']           # learning rate of the actor
-    LR_CRITIC = d_params['LR_CRITIC']         # learning rate of the critic
-    WEIGHT_DECAY = d_params['WEIGHT_DECAY']   # L2 weight decay
-    UPDATE_EVERY = d_params['UPDATE_EVERY']   # steps to update
+                                       'PPO PARAMETERS')
+    GAMMA = d_params['GAMMA']                 # discount factore
     DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     PARAMS = table
 
-set_global_parms(yaml.load(open('../config.yaml', 'r'))['DDPG'])
+PATH = os.path.dirname(os.path.realpath(__file__))
+PATH = PATH.replace('ppo', 'config.yaml')
+set_global_parms(yaml.load(open(PATH, 'r'))['PPO'])
 
 '''
 End help functions and variables
@@ -213,77 +209,3 @@ class Agent(object):
 
     def reset(self):
         self.noise.reset()
-
-
-class OUNoise:
-    """Ornstein-Uhlenbeck process."""
-
-    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
-        """Initialize parameters and noise process."""
-        self.mu = mu * np.ones(size)
-        self.size = size
-        self.theta = theta
-        self.sigma = sigma
-        self.seed = random.seed(seed)
-        self.reset()
-
-    def reset(self):
-        """Reset the internal state (= noise) to mean (mu)."""
-        self.state = copy.copy(self.mu)
-
-    def sample(self):
-        """Update internal state and return it as a noise sample."""
-        x = self.state
-        dx = self.theta * (self.mu - x)
-        # dx += self.sigma * np.random.rand(*self.size)  # Uniform disribution
-        dx += self.sigma * np.random.randn(*self.size)  # normal distribution
-        # dx += self.sigma * np.array([random.random() for i in range(len(x))])
-        self.state = x + dx
-        return self.state
-
-
-class ReplayBuffer(object):
-    '''Fixed-size buffer to store experience tuples.'''
-
-    def __init__(self, action_size, buffer_size, batch_size, seed):
-        '''Initialize a ReplayBuffer object.
-
-        :param action_size: int. dimension of each action
-        :param buffer_size: int: maximum size of buffer
-        :param batch_size (int): size of each training batch
-        :param seed (int): random seed
-        '''
-        self.action_size = action_size
-        self.memory = deque(maxlen=buffer_size)
-        self.batch_size = batch_size
-        self.experience = namedtuple("Experience",
-                                     field_names=["state", "action", "reward",
-                                                  "next_state", "done"])
-        self.seed = random.seed(seed)
-
-    def add(self, state, action, reward, next_state, done):
-        '''Add a new experience to memory.'''
-        e = self.experience(state, action, reward, next_state, done)
-        self.memory.append(e)
-
-    def sample(self):
-        '''Randomly sample a batch of experiences from memory.'''
-        experiences = random.sample(self.memory, k=self.batch_size)
-
-        states = torch.from_numpy(np.vstack([e.state for e in experiences
-                                  if e is not None])).float().to(DEVC)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences
-                                   if e is not None])).long().to(DEVC)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences
-                                   if e is not None])).float().to(DEVC)
-        next_states = torch.from_numpy(np.vstack([e.next_state
-                                                  for e in experiences
-                                                  if e is not None])).float().to(DEVC)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences
-                                            if e is not None]).astype(np.uint8)).float().to(DEVC)
-
-        return (states, actions, rewards, next_states, dones)
-
-    def __len__(self):
-        '''Return the current size of internal memory.'''
-        return len(self.memory)
