@@ -11,18 +11,29 @@ except ModuleNotFoundError:
     from drlnd.utils.make_env import make
 
 
+class Trajectories(object):
+    def __init__(self):
+        self.state_list = []
+        self.reward_list = []
+        self.prob_list = []
+        self.action_list = []
 
-import matplotlib
-import matplotlib.pyplot as plt
-import torch
-import numpy as np
-import random as rand
+    def add(self, states, rewards, probs, actions):
+        iter_obj = zip(states, rewards, probs, actions)
+        for state, reward, prob, action in iter_obj:
+            self.state_list.append(state)
+            self.reward_list.append(reward)
+            self.prob_list.append(prob)
+            self.action_list.append(action)
 
+    def __len__(self):
+        return len(self.state_list)
 
-RIGHT=4
-LEFT=5
+    def __iter__(self, idx):
+        s, r = self.state_list[i], self.reward_list[i]
+        p, a = self.prob_list[i], self.action_list[i]
+        return s, r, p, a
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # preprocess a single frame
 # crop image and downsample to 80x80

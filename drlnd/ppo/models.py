@@ -34,73 +34,29 @@ End help functions
 
 
 class Policy(nn.Module):
+    '''
+    '''
 
-    def __init__(self):
+    def __init__(self, action_size, ActorBody, CriticBody):
+        '''
+        '''
         super(Policy, self).__init__()
-        # 80x80x2 to 38x38x4
-        # 2 channel from the stacked frame
-        self.conv1 = nn.Conv2d(2, 4, kernel_size=6, stride=2, bias=False)
-        # 38x38x4 to 9x9x32
-        self.conv2 = nn.Conv2d(4, 16, kernel_size=6, stride=4)
-        self.size = 9*9*16
+        self.actor_body = ActorBody
+        self.critic_body = CriticBody
+        self.std = nn.Parameter(torch.ones(1, action_size))
 
-        # two fully connected layer
-        self.fc1 = nn.Linear(self.size, 256)
-        self.fc2 = nn.Linear(256, 1)
-
-        # Sigmoid to
-        self.sig = nn.Sigmoid()
-
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = x.view(-1, self.size)
-        x = F.relu(self.fc1(x))
-        return self.sig(self.fc2(x))
-
-
-class ActorCriticNet(nn.Module):
-    def __init__(self, state_dim, action_dim, phi_body, actor_body, critic_body):
-        super(ActorCriticNet, self).__init__()
-        if phi_body is None: phi_body = DummyBody(state_dim)
-        if actor_body is None: actor_body = DummyBody(phi_body.feature_dim)
-        if critic_body is None: critic_body = DummyBody(phi_body.feature_dim)
-        self.phi_body = phi_body
-        self.actor_body = actor_body
-        self.critic_body = critic_body
-        self.fc_action = layer_init(nn.Linear(actor_body.feature_dim, action_dim), 1e-3)
-        self.fc_critic = layer_init(nn.Linear(critic_body.feature_dim, 1), 1e-3)
-
-        self.actor_params = list(self.actor_body.parameters()) + list(self.fc_action.parameters())
-        self.critic_params = list(self.critic_body.parameters()) + list(self.fc_critic.parameters())
-        self.phi_params = list(self.phi_body.parameters())
-
-
-class GaussianActorCriticNet(nn.Module, BaseNet):
-    def __init__(self,
-                 state_dim,
-                 action_dim,
-                 phi_body=None,
-                 actor_body=None,
-                 critic_body=None):
-        super(GaussianActorCriticNet, self).__init__()
-        self.network = ActorCriticNet(state_dim, action_dim, phi_body, actor_body, critic_body)
-        self.std = nn.Parameter(torch.ones(1, action_dim))
-        self.to(Config.DEVICE)
-
-    def forward(self, obs, action=None):
-        obs = tensor(obs)
-        phi = self.network.phi_body(obs)
-        phi_a = self.network.actor_body(phi)
-        phi_v = self.network.critic_body(phi)
-        mean = F.tanh(self.network.fc_action(phi_a))
-        v = self.network.fc_critic(phi_v)
-        dist = torch.distributions.Normal(mean, self.std)
-        if action is None:
-            action = dist.sample()
+    def forward(self, states, actions=None):
+        '''
+        '''
+        estimated_actions = self.actor_body(states)
+        estimated_values = self.critic_body(states)
+        dist = torch.distributions.Normal(estimated_actions, self.std)
+        if not actions:
+            actions = dist.sample()
         log_prob = dist.log_prob(action)
         log_prob = torch.sum(log_prob, dim=1, keepdim=True)
-        return action, log_prob, tensor(np.zeros((log_prob.size(0), 1))), v
+        x = tensor(np.zeros((log_prob.size(0), 1)))
+        return actions, log_prob, x, estimated_values
 
 
 class Actor(nn.Module):

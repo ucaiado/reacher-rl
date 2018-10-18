@@ -23,9 +23,9 @@ import torch.optim as optim
 import pdb
 
 try:
-    from agent_utils import param_table, Actor, Critic
+    from agent_utils import param_table, Actor, Critic, Policy
 except:
-    from .agent_utils import param_table, Actor, Critic
+    from .agent_utils import param_table, Actor, Critic, Policy
 
 '''
 Begin help functions and variables
@@ -93,24 +93,13 @@ class Agent(object):
 
         self.nb_agents = nb_agents
         self.action_size = action_size
-        self.__name__ = 'DDPG'
+        self.__name__ = 'PPO'
 
-        # Actor Network (w/ Target Network)
-        self.actor_local = Actor(state_size, action_size, rand_seed).to(DEVC)
-        self.actor_target = Actor(state_size, action_size, rand_seed).to(DEVC)
-        self.actor_optimizer = optim.Adam(self.actor_local.parameters(),
-                                          lr=LR_ACTOR)
-
-        # Critic Network (w/ Target Network)
-        self.critic_local = Critic(state_size, action_size, rand_seed).to(DEVC)
-        self.critic_target = Critic(state_size, action_size, rand_seed).to(DEVC)
-        # NOTE: the decay corresponds to L2 regularization
-        self.critic_optimizer = optim.Adam(self.critic_local.parameters(),
-                                           lr=LR_CRITIC,
-                                           weight_decay=WEIGHT_DECAY)
-
-        # Noise process
-        self.noise = OUNoise((nb_agents, action_size), rand_seed)
+        # Policy Network
+        action_net = Actor(state_size, action_size, rand_seed).to(DEVC)
+        critic_net = Critic(state_size, action_size, rand_seed).to(DEVC)
+        self.policy = Policy(action_size, action_net, critic_net)
+        self.optimizer = optim.Adam(self.actor_local.parameters(), lr=LR)
 
         # Replay memory
         self.memory = ReplayBuffer(action_size, BUFFER_SIZE,
@@ -120,41 +109,29 @@ class Agent(object):
         self.t_step = 0
 
     def step(self, states, actions, rewards, next_states, dones):
-        iter_obj = zip(states, actions, rewards, next_states, dones)
-        for state, action, reward, next_state, done in iter_obj:
-            # Save experience in replay memory
-            self.memory.add(state, action, reward, next_state, done)
 
         # Learn every UPDATE_EVERY time steps.
         self.t_step = (self.t_step + 1) % UPDATE_EVERY
         if self.t_step == 0:
-            # If enough samples are available in memory, get random subset
-            # and learn
-            if len(self.memory) > BATCH_SIZE:
-                # source: Sample a random minibatch of N transitions from R
-                experiences = self.memory.sample()
-                self.learn(experiences, GAMMA)
+            experiences = self.memory.sample()
+            self.learn(experiences, GAMMA)
 
-    def act(self, states, add_noise=True):
+    def act(self, states):
         '''Returns actions for given states as per current policy.
 
         :param states: array_like. current states
-        :param add_noise: Boolean. If should add noise to the action
         '''
         states = torch.from_numpy(states).float().to(DEVC)
-        self.actor_local.eval()
+        self.policy.eval()
         with torch.no_grad():
-            actions = self.actor_local(states).cpu().data.numpy()
-        self.actor_local.train()
-        # source: Select action at = μ(st|θμ) + Nt according to the current
-        # policy and exploration noise
+            actions, log_probs, _, values = self.policy(states)
+            actions = actions.cpu().data.numpy()
+            log_probs = log_probs.cpu().data.numpy()
+            values = values.cpu().data.numpy()
         # pdb.set_trace()
         if add_noise:
             actions += self.noise.sample()
-        return np.clip(actions, -1, 1)
-
-    def reset(self):
-        self.noise.reset()
+        return actions, log_probs, values
 
     def learn(self, experiences, gamma):
         '''
@@ -202,15 +179,51 @@ class Agent(object):
         self.soft_update(self.critic_local, self.critic_target, TAU)
         self.soft_update(self.actor_local, self.actor_target, TAU)
 
-    def soft_update(self, local_model, target_model, tau):
-        '''Soft update model parameters.
-        θ_target = τ*θ_local + (1 - τ)*θ_target
 
-        :param local_model: PyTorch model. weights will be copied from
-        :param target_model: PyTorch model. weights will be copied to
-        :param tau: float. interpolation parameter
-        '''
-        iter_params = zip(target_model.parameters(), local_model.parameters())
-        for target_param, local_param in iter_params:
-            tensor_aux = tau*local_param.data + (1.0-tau)*target_param.data
-            target_param.data.copy_(tensor_aux)
+
+
+
+
+def clipped_surrogate(policy, old_probs, states, actions, rewards,
+                      discount=0.995,
+                      epsilon=0.1, beta=0.01):
+
+    discount = discount**np.arange(len(rewards))
+    rewards = np.asarray(rewards)*discount[:,np.newaxis]
+
+    # convert rewards to future rewards
+    rewards_future = rewards[::-1].cumsum(axis=0)[::-1]
+
+    mean = np.mean(rewards_future, axis=1)
+    std = np.std(rewards_future, axis=1) + 1.0e-10
+
+    rewards_normalized = (rewards_future - mean[:,np.newaxis])/std[:,np.newaxis]
+
+    # convert everything into pytorch tensors and move to gpu if available
+    actions = torch.tensor(actions, dtype=torch.int8, device=device)
+    old_probs = torch.tensor(old_probs, dtype=torch.float, device=device)
+    rewards = torch.tensor(rewards_normalized, dtype=torch.float, device=device)
+
+    # convert states to policy (or probability)
+    new_probs = states_to_prob(policy, states)
+    new_probs = torch.where(actions == RIGHT, new_probs, 1.0-new_probs)
+
+    # ratio for clipping
+    ratio = new_probs/old_probs
+
+    # clipped function
+    clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
+    clipped_surrogate = torch.min(ratio*rewards, clip*rewards)
+
+    # include a regularization term
+    # this steers new_policy towards 0.5
+    # add in 1.e-10 to avoid log(0) which gives nan
+    entropy = -(new_probs*torch.log(old_probs+1.e-10)+ \
+        (1.0-new_probs)*torch.log(1.0-old_probs+1.e-10))
+
+
+    # this returns an average of all the entries of the tensor
+    # effective computing L_sur^clip / T
+    # averaged over time-step and number of trajectories
+    # this is desirable because we have normalized our rewards
+    return torch.mean(clipped_surrogate + beta*entropy)
