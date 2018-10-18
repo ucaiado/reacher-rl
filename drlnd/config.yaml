@@ -1,6 +1,6 @@
 SEED: 0
 ENVS:
-  Darwin: ../../Reacher.app
+  Darwin: /Users/ucaiado/GIT/reacher-rl/Reacher.app
   Linux: /home/aind2/reacher-rl/Reacher_Linux_NoVis/Reacher.x86_64
   Windows: C:/GIT/reacher-rl/Reacher_Windows_x86_64/Reacher.exe
 DDPG:
@@ -13,9 +13,8 @@ DDPG:
   UPDATE_EVERY: 2
   WEIGHT_DECAY: 0.0001
 PPO:
-  DISCOUNT_RATE: 0.99
-  GAE_TAU: 0.95
+  DISCOUNT: 0.99
+  EPSILON: 0.1
   BETA: 0.1
-  SGD_EPOCH: 4
-  RATIO_CLIP: 0.2
-  TMAX: 320
+  SGD_EPOCH: 10
+  LR: 0.0001

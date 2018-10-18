@@ -30,14 +30,12 @@ except:
 '''
 Begin help functions and variables
 '''
-BUFFER_SIZE = None
-BATCH_SIZE = None
-GAMMA = None
-TAU = None
-LR_ACTOR = None
-LR_CRITIC = None
-WEIGHT_DECAY = None
-UPDATE_EVERY = None
+LR = None
+SGD_EPOCH = None
+DISCOUNT = None
+EPSILON = None
+BETA = None
+UPDATE_EVERY = 1
 DEVC = None
 PARAMS = None
 
@@ -50,20 +48,36 @@ PARAMS = None
 # Learning rate - 3e-4
 
 
+def states_to_prob(policy, states):
+    '''
+    convert states to probability, passing through the polic
+
+    :param policy: Torch NNetowrk.
+    :param states: Torch Tensor.
+    '''
+    states = torch.stack(states)
+    policy_input = states.view(-1, *states.shape[-3:])
+    _, log_probs, _, _ = policy(policy_input)
+    return log_probs.view(states.shape[:-3])
+
+
 def set_global_parms(d_table):
     '''
     convert statsmodel tabel to the agent parameters
 
     :param d_table: Dictionary. Parameters of the agent
     '''
-    global BUFFER_SIZE, BATCH_SIZE, GAMMA, TAU, LR_ACTOR, LR_CRITIC
-    global WEIGHT_DECAY, UPDATE_EVERY, DEVC, PARAMS
+    global LR, SGD_EPOCH, BETA, EPSILON, DISCOUNT, DEVC, PARAMS
     l_table = [(a, [b]) for a, b in d_table.items()]
     d_params = dict([[x[0], x[1][0]] for x in l_table])
     table = param_table.generate_table(l_table[:int(len(l_table)/2)],
                                        l_table[int(len(l_table)/2):],
                                        'PPO PARAMETERS')
-    GAMMA = d_params['GAMMA']                 # discount factore
+    LR = d_params['LR']
+    SGD_EPOCH = d_params['SGD_EPOCH']
+    BETA = d_params['BETA']
+    EPSILON = d_params['EPSILON']
+    DISCOUNT = d_params['DISCOUNT']
     DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     PARAMS = table
 
@@ -96,25 +110,22 @@ class Agent(object):
         self.__name__ = 'PPO'
 
         # Policy Network
-        action_net = Actor(state_size, action_size, rand_seed).to(DEVC)
+        actor_net = Actor(state_size, action_size, rand_seed).to(DEVC)
         critic_net = Critic(state_size, action_size, rand_seed).to(DEVC)
-        self.policy = Policy(action_size, action_net, critic_net)
-        self.optimizer = optim.Adam(self.actor_local.parameters(), lr=LR)
-
-        # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE,
-                                   BATCH_SIZE, rand_seed)
+        self.policy = Policy(action_size, actor_net, critic_net)
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=LR)
 
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
 
-    def step(self, states, actions, rewards, next_states, dones):
+    def step(self, trajectory, eps, beta):
 
         # Learn every UPDATE_EVERY time steps.
         self.t_step = (self.t_step + 1) % UPDATE_EVERY
         if self.t_step == 0:
-            experiences = self.memory.sample()
-            self.learn(experiences, GAMMA)
+            for i in range(SGD_EPOCH):
+                # experiences = self.memory.sample()
+                self.learn(trajectory, eps, beta)
 
     def act(self, states):
         '''Returns actions for given states as per current policy.
@@ -124,16 +135,14 @@ class Agent(object):
         states = torch.from_numpy(states).float().to(DEVC)
         self.policy.eval()
         with torch.no_grad():
-            actions, log_probs, _, values = self.policy(states)
+            actions, log_probs, other1, values = self.policy(states)
             actions = actions.cpu().data.numpy()
             log_probs = log_probs.cpu().data.numpy()
             values = values.cpu().data.numpy()
-        # pdb.set_trace()
-        if add_noise:
-            actions += self.noise.sample()
-        return actions, log_probs, values
+        # self.policy.train()  # ?
+        return np.clip(actions, -1, 1), log_probs, values
 
-    def learn(self, experiences, gamma):
+    def learn(self, trajectories, eps, beta):
         '''
         Update policy and value params using given batch of experience tuples.
         Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
@@ -141,89 +150,61 @@ class Agent(object):
             actor_target(state) -> action
             critic_target(state, action) -> Q-value
 
-        :param experiences: Tuple[torch.Tensor]. tuple of (s, a, r, s', done)
-        :param gamma: float. discount factor
+        :param trajectories: Trajectory object. tuples of (s, a, r, s', done)
+        :param eps: float. epsilon
+        :param beta: float. beta
         '''
-        states, actions, rewards, next_states, dones = experiences
-        # rewards_ = torch.clamp(rewards, min=-1., max=1.)
-        rewards_ = rewards
 
-        # --------------------------- update critic ---------------------------
-        # Get predicted next-state actions and Q values from target models
-        actions_next = self.actor_target(next_states)
-        Q_targets_next = self.critic_target(next_states, actions_next)
-        # Compute Q targets for current states (y_i)
-        Q_targets = rewards_ + (gamma * Q_targets_next * (1 - dones))
-        # Compute critic loss: L = 1/N SUM{(yi − Q(si, ai|θQ))^2}
-        Q_expected = self.critic_local(states, actions)
-        critic_loss = F.mse_loss(Q_expected, Q_targets)
+        states = torch.Tensor(trajectories['state'])
+        rewards = torch.Tensor(trajectories['reward'])
+        old_probs = torch.Tensor(trajectories['prob'])
+        actions = torch.Tensor(trajectories['action'])
+        old_values = torch.Tensor(trajectories['value'])
+        this_loss = clipped_surrogate(self.policy, old_probs, states, actions,
+                                      rewards, old_values, eps, beta)
         # Minimize the loss
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        # suggested by Attempt 3, from Udacity
-        # torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
-        self.critic_optimizer.step()
-
-        # --------------------------- update actor ---------------------------
-        # Compute actor loss: ∇θμ J ≈1/N  ∇aQ(s, a|θQ)|s=si,a=μ(si)∇θμ μ(s|θμ)
-        actions_pred = self.actor_local(states)
-        actor_loss = -self.critic_local(states, actions_pred).mean()
-        # Minimize the loss
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
-
-        # ---------------------- update target networks ----------------------
-        # Update the critic target networks: θQ′ ←τθQ +(1−τ)θQ′
-        # Update the actor target networks: θμ′ ←τθμ +(1−τ)θμ′
-        self.soft_update(self.critic_local, self.critic_target, TAU)
-        self.soft_update(self.actor_local, self.actor_target, TAU)
+        self.optimizer.zero_grad()
+        this_loss.backward()
+        self.optimizer.step()
 
 
-
-
-
-
-def clipped_surrogate(policy, old_probs, states, actions, rewards,
-                      discount=0.995,
+def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
                       epsilon=0.1, beta=0.01):
+        # discount rewards and convert them to future rewards
+        discount = DISCOUNT**np.arange(len(rewards))
+        print(DISCOUNT)
+        print(DISCOUNT**np.arange(len(rewards)))
+        pdb.set_trace()
+        rewards = np.asarray(rewards)[:, np.newaxis]*discount[:, np.newaxis]
+        rewards_future = rewards[::-1].cumsum(axis=0)[::-1]
+        mean = np.mean(rewards_future, axis=1)
+        std = np.std(rewards_future, axis=1) + 1.0e-10
+        rwds_normalized = (rewards_future - mean[:, np.newaxis])
+        rwds_normalized /= std[:, np.newaxis]
 
-    discount = discount**np.arange(len(rewards))
-    rewards = np.asarray(rewards)*discount[:,np.newaxis]
+        # convert everything into pytorch tensors and move to gpu if available
+        actions = torch.tensor(actions, dtype=torch.float, device=DEVC)
+        old_probs = torch.tensor(old_probs, dtype=torch.float, device=DEVC)
+        old_values = torch.tensor(old_values, dtype=torch.float, device=DEVC)
+        rewards = torch.tensor(rwds_normalized, dtype=torch.float, device=DEVC)
 
-    # convert rewards to future rewards
-    rewards_future = rewards[::-1].cumsum(axis=0)[::-1]
+        decided_act, new_probs, entropy_loss, values = policy(states, actions)
 
-    mean = np.mean(rewards_future, axis=1)
-    std = np.std(rewards_future, axis=1) + 1.0e-10
+        # ratio for clipping
+        ratio = (new_probs - old_probs).exp()
 
-    rewards_normalized = (rewards_future - mean[:,np.newaxis])/std[:,np.newaxis]
+        # clipped function
+        clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
+        clipped_surrog = torch.min(ratio*rewards, clip*rewards)
+        # pdb.set_trace()
 
-    # convert everything into pytorch tensors and move to gpu if available
-    actions = torch.tensor(actions, dtype=torch.int8, device=device)
-    old_probs = torch.tensor(old_probs, dtype=torch.float, device=device)
-    rewards = torch.tensor(rewards_normalized, dtype=torch.float, device=device)
-
-    # convert states to policy (or probability)
-    new_probs = states_to_prob(policy, states)
-    new_probs = torch.where(actions == RIGHT, new_probs, 1.0-new_probs)
-
-    # ratio for clipping
-    ratio = new_probs/old_probs
-
-    # clipped function
-    clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
-    clipped_surrogate = torch.min(ratio*rewards, clip*rewards)
-
-    # include a regularization term
-    # this steers new_policy towards 0.5
-    # add in 1.e-10 to avoid log(0) which gives nan
-    entropy = -(new_probs*torch.log(old_probs+1.e-10)+ \
-        (1.0-new_probs)*torch.log(1.0-old_probs+1.e-10))
-
-
-    # this returns an average of all the entries of the tensor
-    # effective computing L_sur^clip / T
-    # averaged over time-step and number of trajectories
-    # this is desirable because we have normalized our rewards
-    return torch.mean(clipped_surrogate + beta*entropy)
+        # include a regularization term
+        # this steers new_policy towards 0.5
+        # this returns an average of all the entries of the tensor
+        # effective computing L_sur^clip / T
+        # averaged over time-step and number of trajectories
+        # this is desirable because we have normalized our rewards
+        policy_loss = -torch.mean(clipped_surrog + beta*entropy_loss)
+        value_loss = 0.5 * (old_values - values).pow(2).mean()
+        # print(policy_loss)
+        return policy_loss

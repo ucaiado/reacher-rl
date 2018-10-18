@@ -51,12 +51,13 @@ class Policy(nn.Module):
         estimated_actions = self.actor_body(states)
         estimated_values = self.critic_body(states)
         dist = torch.distributions.Normal(estimated_actions, self.std)
-        if not actions:
+        if isinstance(actions, type(None)):
             actions = dist.sample()
-        log_prob = dist.log_prob(action)
+        log_prob = dist.log_prob(actions)
         log_prob = torch.sum(log_prob, dim=1, keepdim=True)
-        x = tensor(np.zeros((log_prob.size(0), 1)))
-        return actions, log_prob, x, estimated_values
+        entropy_loss = torch.Tensor(np.zeros((log_prob.size(0), 1)))
+        # print(actions)
+        return actions, log_prob, entropy_loss, estimated_values
 
 
 class Actor(nn.Module):
@@ -115,18 +116,16 @@ class Critic(nn.Module):
         super(Critic, self).__init__()
         self.seed = torch.manual_seed(seed)
         self.fcs1 = nn.Linear(state_size, fcs1_units)
-        self.fc2 = nn.Linear(fcs1_units+action_size, fc2_units)
+        self.fc2 = nn.Linear(fcs1_units, fc2_units)
         self.fc3 = nn.Linear(fc2_units, 1)
         self.reset_parameters()
 
     def reset_parameters(self):
         self.fcs1.weight.data.uniform_(*hidden_init(self.fcs1))
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
-        # source: The final layer weights and biases of the critic were
-        # initialized from a uniform distribution [3 × 10−4, 3 × 10−4]
         self.fc3.weight.data.uniform_(-3e-3, 3e-3)
 
-    def forward(self, state, action):
+    def forward(self, state):
         """
         Build a critic (value) network that maps
         (state, action) pairs -> Q-values
@@ -135,7 +134,5 @@ class Critic(nn.Module):
         :param action: tuple.
         """
         xs = F.relu(self.fcs1(state))
-        # source: Actions were not included until the 2nd hidden layer of Q
-        x = torch.cat((xs, action.float()), dim=1)
-        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc2(xs))
         return self.fc3(x)

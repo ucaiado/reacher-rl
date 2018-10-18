@@ -8,23 +8,20 @@ Implement ...
 
 Created on 10/07/2018
 """
-from agent import Agent, PARAMS
+from agent import Agent, PARAMS, EPSILON, BETA
 from collections import deque
-from unityagents import UnityEnvironment
 import numpy as np
-import platform
-import time
 import pickle
 import pdb
 import torch
-from agent_utils import make
+from agent_utils import make, Trajectory
 
 
 '''
 Begin help functions and variables
 '''
 
-DATA_PREFIX = '../../data/2018-10-07-'
+DATA_PREFIX = '../../data/2018-10-14-'
 SOLVED = False
 
 
@@ -36,7 +33,7 @@ if __name__ == '__main__':
     env = make()
 
     # from drlnd.ddpg_agent import Agent
-    episodes = 3
+    episodes = 200
     rand_seed = 0
 
     scores = []
@@ -50,32 +47,38 @@ if __name__ == '__main__':
     print(PARAMS)
 
     print('\nNN ARCHITECURES:')
-    print(agent.actor_local)
-    print(agent.critic_local)
+    print(agent.policy.actor_body)
+    print(agent.policy.critic_body)
 
     print('\nTRAINING:')
+    eps = EPSILON
+    beta = BETA
     for episode in range(episodes):
         states = env.reset()
-        score = 0.
+        trject = Trajectory()
         for i in range(1000):
-            actions = agent.act(states, add_noise=True)
+            actions, log_probs, values = agent.act(states)
+            # pdb.set_trace()
             next_states, rewards, dones = env.step(actions)
-            agent.step(states, actions, rewards, next_states, dones)
-            score += np.mean(rewards)
+            trject.add(states, rewards, log_probs, actions, values)
             states = next_states
             if np.any(dones):
                 break
 
-        scores.append(score)
-        scores_window.append(score)
+        agent.step(trject, eps, beta)
+        eps *= 0.99
+        beta *= 0.995
+
+        scores.append(trject.score)
+        scores_window.append(trject.score)
         scores_avg.append(np.mean(scores_window))
         scores_std.append(np.std(scores_window))
         s_msg = '\rEpisode {}\tAverage Score: {:.2f}\tσ: {:.2f}\tScore: {:.2f}'
         print(s_msg.format(episode, np.mean(scores_window),
-                           np.std(scores_window), score), end="")
+                           np.std(scores_window), trject.score), end="")
         if episode % 10 == 0:
             print(s_msg.format(episode, np.mean(scores_window),
-                               np.std(scores_window), score))
+                               np.std(scores_window), trject.score))
         if np.mean(scores_window) >= 30.:
             SOLVED = True
             s_msg = '\n\nEnvironment solved in {:d} episodes!\tAverage '
@@ -84,10 +87,8 @@ if __name__ == '__main__':
                                np.std(scores_window)))
             # save the models
             s_aux = '%scheckpoint-%s.%s.pth'
-            s_actor_path = s_aux % (DATA_PREFIX, agent.__name__, 'actor')
-            s_critic_path = s_aux % (DATA_PREFIX, agent.__name__, 'critic')
-            torch.save(agent.actor_local.state_dict(), s_actor_path)
-            torch.save(agent.critic_local.state_dict(), s_critic_path)
+            s_policy_path = s_aux % (DATA_PREFIX, agent.__name__, 'policy')
+            torch.save(agent.policy.state_dict(), s_policy_path)
             break
 
     # save data to use later
