@@ -51,11 +51,15 @@ class Policy(nn.Module):
         estimated_actions = self.actor_body(states)
         estimated_values = self.critic_body(states)
         dist = torch.distributions.Normal(estimated_actions, self.std)
+        i_dim = 2
         if isinstance(actions, type(None)):
+            i_dim = 1
             actions = dist.sample()
         log_prob = dist.log_prob(actions)
-        log_prob = torch.sum(log_prob, dim=1, keepdim=True)
-        entropy_loss = torch.Tensor(np.zeros((log_prob.size(0), 1)))
+        log_prob = torch.sum(log_prob, dim=i_dim, keepdim=True)
+        # entropy_loss = torch.Tensor(np.zeros((log_prob.size(0), 1)))
+        entropy_loss = dist.entropy()
+        entropy_loss = torch.sum(entropy_loss, dim=i_dim)/4
         # print(actions)
         return actions, log_prob, entropy_loss, estimated_values
 

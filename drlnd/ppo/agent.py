@@ -17,6 +17,7 @@ import yaml
 from collections import namedtuple, deque
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
@@ -38,6 +39,42 @@ BETA = None
 UPDATE_EVERY = 1
 DEVC = None
 PARAMS = None
+
+
+
+import numpy as np
+import torch.nn as nn
+
+
+class Batcher:
+
+    def __init__(self, batch_size, data):
+        self.batch_size = batch_size
+        self.data = data
+        self.num_entries = len(data[0])
+        self.reset()
+
+    def reset(self):
+        self.batch_start = 0
+        self.batch_end = self.batch_start + self.batch_size
+
+    def end(self):
+        return self.batch_start >= self.num_entries
+
+    def next_batch(self):
+        batch = []
+        for d in self.data:
+            batch.append(d[self.batch_start: self.batch_end])
+        self.batch_start = self.batch_end
+        self.batch_end = min(self.batch_start + self.batch_size, self.num_entries)
+        return batch
+
+    def shuffle(self):
+        indices = np.arange(self.num_entries)
+        np.random.shuffle(indices)
+        self.data = [d[indices] for d in self.data]
+
+
 
 
 # Discount rate - 0.99
@@ -160,27 +197,48 @@ class Agent(object):
         old_probs = torch.Tensor(trajectories['prob'])
         actions = torch.Tensor(trajectories['action'])
         old_values = torch.Tensor(trajectories['value'])
-        this_loss = clipped_surrogate(self.policy, old_probs, states, actions,
-                                      rewards, old_values, eps, beta)
-        # Minimize the loss
-        self.optimizer.zero_grad()
-        this_loss.backward()
-        self.optimizer.step()
+        nb = self.nb_agents
+
+        batcher = Batcher(states.size(0) // 16, [np.arange(states.size(0))])
+        batcher.shuffle()
+        while not batcher.end():
+            batch_indices = batcher.next_batch()[0]
+            batch_indices = torch.Tensor(batch_indices).long()
+
+            this_loss = clipped_surrogate(self.policy,
+                                          old_probs[batch_indices],
+                                          states[batch_indices],
+                                          actions[batch_indices],
+                                          rewards[batch_indices],
+                                          old_values[batch_indices],
+                                          nb,
+                                          eps,
+                                          beta)
+            # this_loss *= -1.
+            # print(this_loss)
+            # Minimize the loss
+            self.optimizer.zero_grad()
+            this_loss.backward()
+            # nn.utils.clip_grad_norm_(self.policy.parameters(), 5)
+            self.optimizer.step()
 
 
 def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
-                      epsilon=0.1, beta=0.01):
+                      nb_agents, epsilon=0.1, beta=0.01):
         # discount rewards and convert them to future rewards
+
+        # discount = np.zeros(len(rewards))
+        # discount[range(0, len(discount), nb_agents)] = 1.
+        # discount = DISCOUNT**np.cumsum(discount)
         discount = DISCOUNT**np.arange(len(rewards))
-        print(DISCOUNT)
-        print(DISCOUNT**np.arange(len(rewards)))
-        pdb.set_trace()
-        rewards = np.asarray(rewards)[:, np.newaxis]*discount[:, np.newaxis]
+        rewards = np.asarray(rewards)*discount[:, np.newaxis]
         rewards_future = rewards[::-1].cumsum(axis=0)[::-1]
+
         mean = np.mean(rewards_future, axis=1)
         std = np.std(rewards_future, axis=1) + 1.0e-10
         rwds_normalized = (rewards_future - mean[:, np.newaxis])
         rwds_normalized /= std[:, np.newaxis]
+        # pdb.set_trace()
 
         # convert everything into pytorch tensors and move to gpu if available
         actions = torch.tensor(actions, dtype=torch.float, device=DEVC)
@@ -191,11 +249,14 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         decided_act, new_probs, entropy_loss, values = policy(states, actions)
 
         # ratio for clipping
-        ratio = (new_probs - old_probs).exp()
+        with torch.no_grad():
+            ratio = (new_probs - old_probs).exp()
 
         # clipped function
         clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
-        clipped_surrog = torch.min(ratio*rewards, clip*rewards)
+        clipped_surrog = torch.min(ratio*rewards[:, :, np.newaxis],
+                                   clip*rewards[:, :, np.newaxis])
+        clipped_surrog = -torch.min(ratio, clip)
         # pdb.set_trace()
 
         # include a regularization term
@@ -204,7 +265,7 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         # effective computing L_sur^clip / T
         # averaged over time-step and number of trajectories
         # this is desirable because we have normalized our rewards
-        policy_loss = -torch.mean(clipped_surrog + beta*entropy_loss)
-        value_loss = 0.5 * (old_values - values).pow(2).mean()
-        # print(policy_loss)
+        entropy_loss = entropy_loss[:, :, np.newaxis]
+        policy_loss = torch.mean(clipped_surrog + beta*entropy_loss)
+        # print(clipped_surrog.mean(), beta*entropy_loss.mean())
         return policy_loss

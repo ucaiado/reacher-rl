@@ -24,13 +24,19 @@ class Trajectory(object):
 
     def add(self, states, rewards, probs, actions, values):
         iter_obj = zip(states, rewards, probs, actions, values)
-        for state, reward, prob, action, value in iter_obj:
-            self.data['state'].append(state)
-            self.data['reward'].append(reward)
-            self.data['prob'].append(prob)
-            self.data['action'].append(action)
-            self.data['value'].append(value)
-            self.score += np.mean(reward)
+        self.data['state'].append(states)
+        self.data['reward'].append(rewards)
+        self.data['prob'].append(probs)
+        self.data['action'].append(actions)
+        self.data['value'].append(values)
+        self.score += np.mean(rewards)
+        # for state, reward, prob, action, value in iter_obj:
+        #     self.data['state'].append(state)
+        #     self.data['reward'].append(reward)
+        #     self.data['prob'].append(prob)
+        #     self.data['action'].append(action)
+        #     self.data['value'].append(value)
+        #     self.score += np.mean(reward)
 
     def __len__(self):
         return len(self.state_list)
