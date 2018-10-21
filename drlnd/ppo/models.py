@@ -43,13 +43,14 @@ class Policy(nn.Module):
         super(Policy, self).__init__()
         self.actor_body = ActorBody
         self.critic_body = CriticBody
-        self.std = nn.Parameter(torch.ones(1, action_size))
+        self.std = torch.Tensor(nn.Parameter(torch.ones(1, action_size)))
 
     def forward(self, states, actions=None):
         '''
         '''
         estimated_actions = self.actor_body(states)
         estimated_values = self.critic_body(states)
+        # pdb.set_trace()
         dist = torch.distributions.Normal(estimated_actions, self.std)
         i_dim = 2
         if isinstance(actions, type(None)):

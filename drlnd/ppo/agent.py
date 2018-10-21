@@ -161,6 +161,7 @@ class Agent(object):
         self.t_step = (self.t_step + 1) % UPDATE_EVERY
         if self.t_step == 0:
             for i in range(SGD_EPOCH):
+                # print('\n\nnew epoch')
                 # experiences = self.memory.sample()
                 self.learn(trajectory, eps, beta)
 
@@ -172,12 +173,12 @@ class Agent(object):
         states = torch.from_numpy(states).float().to(DEVC)
         self.policy.eval()
         with torch.no_grad():
-            actions, log_probs, other1, values = self.policy(states)
+            actions, log_probs, entropy_loss, values = self.policy(states)
             actions = actions.cpu().data.numpy()
             log_probs = log_probs.cpu().data.numpy()
             values = values.cpu().data.numpy()
-        # self.policy.train()  # ?
-        return np.clip(actions, -1, 1), log_probs, values
+        self.policy.train()  # ?
+        return actions, log_probs, values
 
     def learn(self, trajectories, eps, beta):
         '''
@@ -248,15 +249,16 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
 
         decided_act, new_probs, entropy_loss, values = policy(states, actions)
 
-        # ratio for clipping
-        with torch.no_grad():
-            ratio = (new_probs - old_probs).exp()
+        # ratio for clipping. All probabilities used are log probabilities
+        # with torch.no_grad():
+        ratio = (new_probs - old_probs).exp()
+        # print(torch.max(ratio), torch.min(ratio))
+        # pdb.set_trace()
 
         # clipped function
         clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
         clipped_surrog = torch.min(ratio*rewards[:, :, np.newaxis],
                                    clip*rewards[:, :, np.newaxis])
-        clipped_surrog = -torch.min(ratio, clip)
         # pdb.set_trace()
 
         # include a regularization term
@@ -267,5 +269,6 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         # this is desirable because we have normalized our rewards
         entropy_loss = entropy_loss[:, :, np.newaxis]
         policy_loss = torch.mean(clipped_surrog + beta*entropy_loss)
+        # print(clipped_surrog.mean(), (beta*entropy_loss).mean())
         # print(clipped_surrog.mean(), beta*entropy_loss.mean())
-        return policy_loss
+        return -policy_loss
