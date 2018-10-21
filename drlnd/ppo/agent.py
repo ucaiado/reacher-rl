@@ -39,11 +39,9 @@ BETA = None
 UPDATE_EVERY = 1
 DEVC = None
 PARAMS = None
-
-
-
-import numpy as np
-import torch.nn as nn
+TAU = None
+BATCH_SIZE = None
+GRADIENT_CLIP = None
 
 
 class Batcher:
@@ -75,36 +73,14 @@ class Batcher:
         self.data = [d[indices] for d in self.data]
 
 
-
-
-# Discount rate - 0.99
-# Tau - 0.95
-# Rollout length - 2048
-# Optimization epochs - 10
-# Gradient clip - 0.2
-# Learning rate - 3e-4
-
-
-def states_to_prob(policy, states):
-    '''
-    convert states to probability, passing through the polic
-
-    :param policy: Torch NNetowrk.
-    :param states: Torch Tensor.
-    '''
-    states = torch.stack(states)
-    policy_input = states.view(-1, *states.shape[-3:])
-    _, log_probs, _, _ = policy(policy_input)
-    return log_probs.view(states.shape[:-3])
-
-
 def set_global_parms(d_table):
     '''
     convert statsmodel tabel to the agent parameters
 
     :param d_table: Dictionary. Parameters of the agent
     '''
-    global LR, SGD_EPOCH, BETA, EPSILON, DISCOUNT, DEVC, PARAMS
+    global LR, SGD_EPOCH, BETA, EPSILON, DISCOUNT, DEVC, PARAMS, TAU
+    global BATCH_SIZE, GRADIENT_CLIP
     l_table = [(a, [b]) for a, b in d_table.items()]
     d_params = dict([[x[0], x[1][0]] for x in l_table])
     table = param_table.generate_table(l_table[:int(len(l_table)/2)],
@@ -115,6 +91,9 @@ def set_global_parms(d_table):
     BETA = d_params['BETA']
     EPSILON = d_params['EPSILON']
     DISCOUNT = d_params['DISCOUNT']
+    TAU = d_params['TAU']
+    BATCH_SIZE = d_params['BATCH_SIZE']
+    GRADIENT_CLIP = d_params['GRADIENT_CLIP']
     DEVC = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     PARAMS = table
 
@@ -198,9 +177,30 @@ class Agent(object):
         old_probs = torch.Tensor(trajectories['prob'])
         actions = torch.Tensor(trajectories['action'])
         old_values = torch.Tensor(trajectories['value'])
+        dones = torch.Tensor(trajectories['done'])
         nb = self.nb_agents
 
-        batcher = Batcher(states.size(0) // 16, [np.arange(states.size(0))])
+        # calculate the advatages
+        # processed_rollout = [None] * (len(dones))
+        # advantages = torch.Tensor(np.zeros((self.nb_agents, 1)))
+        # i_max = len(states)
+        # for i in reversed(range(i_max)):
+        #     terminals_ = torch.Tensor(dones[i]).unsqueeze(1)
+        #     rwrds_ = torch.Tensor(rewards[i]).unsqueeze(1)
+        #     values_ = torch.Tensor(old_values[i])
+        #     next_value_ = old_values[min(i_max-1, i + 1)]
+
+        #     td_error = rwrds_ + DISCOUNT * terminals_ * next_value_.detach()
+        #     td_error -= values_.detach()
+        #     advantages = advantages * TAU * DISCOUNT * terminals_ + td_error
+        #     processed_rollout[i] = advantages
+
+        # advantages = torch.stack(processed_rollout).squeeze(2)
+        # advantages = (advantages - advantages.mean()) / advantages.std()
+
+        # learn in batches
+        # batcher = Batcher(states.size(0) // 16, [np.arange(states.size(0))])
+        batcher = Batcher(BATCH_SIZE, [np.arange(states.size(0))])
         batcher.shuffle()
         while not batcher.end():
             batch_indices = batcher.next_batch()[0]
@@ -212,25 +212,21 @@ class Agent(object):
                                           actions[batch_indices],
                                           rewards[batch_indices],
                                           old_values[batch_indices],
+                                          # advantages[batch_indices],
+                                          0,
                                           nb,
                                           eps,
                                           beta)
-            # this_loss *= -1.
-            # print(this_loss)
             # Minimize the loss
             self.optimizer.zero_grad()
             this_loss.backward()
-            # nn.utils.clip_grad_norm_(self.policy.parameters(), 5)
+            # nn.utils.clip_grad_norm_(self.policy.parameters(), GRADIENT_CLIP)
             self.optimizer.step()
 
 
 def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
-                      nb_agents, epsilon=0.1, beta=0.01):
+                      advantages, nb_agents, epsilon=0.1, beta=0.01):
         # discount rewards and convert them to future rewards
-
-        # discount = np.zeros(len(rewards))
-        # discount[range(0, len(discount), nb_agents)] = 1.
-        # discount = DISCOUNT**np.cumsum(discount)
         discount = DISCOUNT**np.arange(len(rewards))
         rewards = np.asarray(rewards)*discount[:, np.newaxis]
         rewards_future = rewards[::-1].cumsum(axis=0)[::-1]
@@ -239,7 +235,6 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         std = np.std(rewards_future, axis=1) + 1.0e-10
         rwds_normalized = (rewards_future - mean[:, np.newaxis])
         rwds_normalized /= std[:, np.newaxis]
-        # pdb.set_trace()
 
         # convert everything into pytorch tensors and move to gpu if available
         actions = torch.tensor(actions, dtype=torch.float, device=DEVC)
@@ -247,7 +242,7 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         old_values = torch.tensor(old_values, dtype=torch.float, device=DEVC)
         rewards = torch.tensor(rwds_normalized, dtype=torch.float, device=DEVC)
 
-        decided_act, new_probs, entropy_loss, values = policy(states, actions)
+        _, new_probs, entropy_loss, values = policy(states, actions)
 
         # ratio for clipping. All probabilities used are log probabilities
         # with torch.no_grad():
@@ -259,7 +254,8 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         clip = torch.clamp(ratio, 1-epsilon, 1+epsilon)
         clipped_surrog = torch.min(ratio*rewards[:, :, np.newaxis],
                                    clip*rewards[:, :, np.newaxis])
-        # pdb.set_trace()
+        # clipped_surrog = torch.min(ratio*advantages[:, :, np.newaxis],
+        #                            clip*advantages[:, :, np.newaxis])
 
         # include a regularization term
         # this steers new_policy towards 0.5
@@ -269,6 +265,4 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         # this is desirable because we have normalized our rewards
         entropy_loss = entropy_loss[:, :, np.newaxis]
         policy_loss = torch.mean(clipped_surrog + beta*entropy_loss)
-        # print(clipped_surrog.mean(), (beta*entropy_loss).mean())
-        # print(clipped_surrog.mean(), beta*entropy_loss.mean())
         return -policy_loss

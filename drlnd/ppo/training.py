@@ -60,13 +60,13 @@ if __name__ == '__main__':
             actions, log_probs, values = agent.act(states)
             # pdb.set_trace()
             next_states, rewards, dones = env.step(actions)
-            trject.add(states, rewards, log_probs, actions, values)
+            trject.add(states, rewards, log_probs, actions, values, dones)
             states = next_states
             if np.any(dones):
                 break
 
         agent.step(trject, eps, beta)
-        eps *= 0.99
+        eps *= 0.999
         beta *= 0.995
 
         scores.append(trject.score)
