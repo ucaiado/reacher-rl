@@ -1,12 +1,16 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
-Implement a model-free approach called Deep DPG (DDPG)
+Implement a policy gradient method called Proximal Policy Optimization (PPO)
+
+Heavily Based on Udacity
+and Shangtong Zhang repository.
+Source: https://bit.ly/2Ezft7I
 
 
-@author: udacity, ucaiado
+@author: ucaiado
 
-Created on 10/07/2018
+Created on 14/07/2018
 """
 
 import numpy as np
@@ -45,29 +49,48 @@ GRADIENT_CLIP = None
 
 
 class Batcher:
+    '''
+    Select random batches from the dataset passed
+
+    author: Shangtong Zhang
+    source: https://bit.ly/2yrYoHy
+    '''
 
     def __init__(self, batch_size, data):
+        '''
+        Initialize a Batcher object. sala all parameters as attributes
+
+        :param batch_size: integer. The size of each batch
+        :data: list. Dataset to be batched
+        '''
         self.batch_size = batch_size
         self.data = data
         self.num_entries = len(data[0])
         self.reset()
 
     def reset(self):
+        '''
+        start the counter
+        '''
         self.batch_start = 0
         self.batch_end = self.batch_start + self.batch_size
 
     def end(self):
+        '''check if the dataset has been consumed'''
         return self.batch_start >= self.num_entries
 
     def next_batch(self):
+        '''select the next batch'''
         batch = []
         for d in self.data:
             batch.append(d[self.batch_start: self.batch_end])
         self.batch_start = self.batch_end
-        self.batch_end = min(self.batch_start + self.batch_size, self.num_entries)
+        self.batch_end = min(self.batch_start + self.batch_size,
+                             self.num_entries)
         return batch
 
     def shuffle(self):
+        '''shuffle the datset passed in the constructor'''
         indices = np.arange(self.num_entries)
         np.random.shuffle(indices)
         self.data = [d[indices] for d in self.data]
@@ -75,7 +98,7 @@ class Batcher:
 
 def set_global_parms(d_table):
     '''
-    convert statsmodel tabel to the agent parameters
+    Convert statsmodel tabel to the agent parameters
 
     :param d_table: Dictionary. Parameters of the agent
     '''
@@ -108,12 +131,12 @@ End help functions and variables
 
 class Agent(object):
     '''
-    Implementation of a DQN agent that interacts with and learns from the
+    Implementation of a PPO agent that interacts with and learns from the
     environment
     '''
 
     def __init__(self, state_size, action_size, nb_agents, rand_seed):
-        '''Initialize an MetaAgent object.
+        '''Initialize an PPO Agent object.
 
         :param state_size: int. dimension of each state
         :param action_size: int. dimension of each action
@@ -161,10 +184,6 @@ class Agent(object):
     def learn(self, trajectories, eps, beta):
         '''
         Update policy and value params using given batch of experience tuples.
-        Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
-        where:
-            actor_target(state) -> action
-            critic_target(state, action) -> Q-value
 
         :param trajectories: Trajectory object. tuples of (s, a, r, s', done)
         :param eps: float. epsilon
@@ -184,7 +203,7 @@ class Agent(object):
         advantages = torch.Tensor(np.zeros((self.nb_agents, 1)))
         i_max = len(states)
         for i in reversed(range(i_max)):
-            terminals_ = torch.Tensor(dones[i]).unsqueeze(1)
+            terminals_ = 1. - torch.Tensor(dones[i]).unsqueeze(1)
             rwrds_ = torch.Tensor(rewards[i]).unsqueeze(1)
             values_ = torch.Tensor(old_values[i])
             next_value_ = old_values[min(i_max-1, i + 1)]
@@ -198,7 +217,6 @@ class Agent(object):
         advantages = (advantages - advantages.mean()) / advantages.std()
 
         # learn in batches
-        # batcher = Batcher(states.size(0) // 16, [np.arange(states.size(0))])
         batcher = Batcher(BATCH_SIZE, [np.arange(states.size(0))])
         batcher.shuffle()
         while not batcher.end():
@@ -262,6 +280,6 @@ def clipped_surrogate(policy, old_probs, states, actions, rewards, old_values,
         # averaged over time-step and number of trajectories
         # this is desirable because we have normalized our rewards
         entropy_loss = entropy_loss[:, :, np.newaxis]
-        # policy_loss = torch.mean(clipped_surrog + beta*entropy_loss)
-        policy_loss = torch.mean(clipped_surrog)
+        policy_loss = torch.mean(clipped_surrog + beta*entropy_loss)
+        # policy_loss = torch.mean(clipped_surrog)
         return -policy_loss
